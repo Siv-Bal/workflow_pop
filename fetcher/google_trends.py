@@ -92,4 +92,3 @@ def get_trend_score(keyword: str, country: str = "US") -> dict:
             "monthly_search_volume": 0,
             "growth_60d_pct": 0,
         }
->>>>>>> 292aa42 (Update ingestion logic)
