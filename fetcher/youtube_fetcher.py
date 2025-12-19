@@ -10,26 +10,27 @@ from dotenv import load_dotenv
 
 from app.database import SessionLocal
 from app.scoring import calculate_pcs, generate_explanation
-from app.crud import create_workflow
+from app.crud import upsert_workflow
+from fetcher.google_trends import get_trend_score
 
-# -------------------------------------------------------------------
+# --------------------------------------------------
 # ENVIRONMENT SETUP
-# -------------------------------------------------------------------
+# --------------------------------------------------
 
 load_dotenv()
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 BASE_URL = "https://www.googleapis.com/youtube/v3"
+REQUEST_TIMEOUT = 10
 
 if not YOUTUBE_API_KEY:
     raise RuntimeError("YOUTUBE_API_KEY not found. Check .env file.")
 
-# -------------------------------------------------------------------
+# --------------------------------------------------
 # HELPERS
-# -------------------------------------------------------------------
+# --------------------------------------------------
 
-def normalize_int(value):
-    """Safely convert YouTube API values to int."""
+def normalize_int(value) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -37,10 +38,6 @@ def normalize_int(value):
 
 
 def extract_workflow_name(title: str) -> str:
-    """
-    Extract a clean workflow name from a YouTube title.
-    Rule-based and explainable.
-    """
     title = title.lower()
 
     keywords = {
@@ -49,7 +46,7 @@ def extract_workflow_name(title: str) -> str:
         "slack": "Slack",
         "whatsapp": "WhatsApp",
         "notion": "Notion",
-        "ai": "AI"
+        "ai": "AI",
     }
 
     found = [label for key, label in keywords.items() if key in title]
@@ -61,22 +58,23 @@ def extract_workflow_name(title: str) -> str:
     else:
         return "General n8n Automation"
 
-# -------------------------------------------------------------------
-# YOUTUBE API CALLS
-# -------------------------------------------------------------------
+# --------------------------------------------------
+# YOUTUBE API
+# --------------------------------------------------
 
-def search_videos(query: str, region: str = "US", max_results: int = 10):
-    url = f"{BASE_URL}/search"
-    params = {
-        "part": "snippet",
-        "q": query,
-        "type": "video",
-        "maxResults": max_results,
-        "regionCode": region,
-        "key": YOUTUBE_API_KEY
-    }
-
-    response = requests.get(url, params=params)
+def search_videos(query: str, region: str, max_results: int):
+    response = requests.get(
+        f"{BASE_URL}/search",
+        params={
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": max_results,
+            "regionCode": region,
+            "key": YOUTUBE_API_KEY,
+        },
+        timeout=REQUEST_TIMEOUT
+    )
     response.raise_for_status()
     return response.json().get("items", [])
 
@@ -85,56 +83,71 @@ def get_video_stats(video_ids: list[str]):
     if not video_ids:
         return []
 
-    url = f"{BASE_URL}/videos"
-    params = {
-        "part": "statistics,snippet",
-        "id": ",".join(video_ids),
-        "key": YOUTUBE_API_KEY
-    }
-
-    response = requests.get(url, params=params)
+    response = requests.get(
+        f"{BASE_URL}/videos",
+        params={
+            "part": "statistics,snippet",
+            "id": ",".join(video_ids),
+            "key": YOUTUBE_API_KEY,
+        },
+        timeout=REQUEST_TIMEOUT
+    )
     response.raise_for_status()
     return response.json().get("items", [])
 
-# -------------------------------------------------------------------
+# --------------------------------------------------
 # INGESTION PIPELINE
-# -------------------------------------------------------------------
+# --------------------------------------------------
 
 def ingest_youtube_workflows(
     query: str = "n8n workflow automation",
     country: str = "US",
-    max_results: int = 10
+    max_results: int = 10,
 ):
-    """
-    Full pipeline:
-    YouTube → normalize → PCS → SQLite
-    """
     db = SessionLocal()
 
     try:
-        videos = search_videos(query, region=country, max_results=max_results)
-        video_ids = [v["id"]["videoId"] for v in videos if "videoId" in v["id"]]
+        videos = search_videos(query, country, max_results)
+        video_ids = [
+            v["id"]["videoId"]
+            for v in videos
+            if v.get("id", {}).get("videoId")
+        ]
 
         stats = get_video_stats(video_ids)
 
         for video in stats:
             title = video["snippet"]["title"]
-            statistics = video.get("statistics", {})
+            s = video.get("statistics", {})
 
-            views = normalize_int(statistics.get("viewCount"))
-            likes = normalize_int(statistics.get("likeCount"))
-            comments = normalize_int(statistics.get("commentCount"))
+            views = normalize_int(s.get("viewCount"))
+            likes = normalize_int(s.get("likeCount"))
+            comments = normalize_int(s.get("commentCount"))
 
+            workflow_name = extract_workflow_name(title)
+
+            # 🔥 GOOGLE TRENDS
+            trend = get_trend_score(workflow_name, country)
+
+            # 🔢 PCS SCORING
             scores = calculate_pcs(
                 views=views,
                 likes=likes,
-                comments=comments
+                comments=comments,
+                keyword=workflow_name,
+                country=country,
             )
 
-            explanation = generate_explanation(scores)
+            # 🧠 EXPLANATION
+            explanation = generate_explanation(
+                views=views,
+                likes=likes,
+                comments=comments,
+                trend_direction=trend["trend_direction"],
+            )
 
             workflow_data = {
-                "name": extract_workflow_name(title),
+                "name": workflow_name,
                 "platform": "YouTube",
                 "country": country,
 
@@ -149,19 +162,40 @@ def ingest_youtube_workflows(
                 "engagement_score": scores["engagement_score"],
                 "volume_score": scores["volume_score"],
                 "trend_score": scores["trend_score"],
+                "trend_direction":trend["trend_direction"],
+                "trend_avg_interest":trend["avg_interest"],
 
-                "explanation": explanation
+                "explanation": explanation,
             }
 
-            create_workflow(db, workflow_data)
+            upsert_workflow(db, workflow_data)
 
     finally:
         db.close()
 
-# -------------------------------------------------------------------
+# --------------------------------------------------
 # MANUAL RUN
-# -------------------------------------------------------------------
+# --------------------------------------------------
 
 if __name__ == "__main__":
-    ingest_youtube_workflows()
+    queries = [
+        "n8n whatsapp automation",
+    "n8n whatsapp ai",
+    "n8n slack automation",
+    "n8n slack ai",
+    "n8n google sheets automation",
+    "n8n google sheets ai",
+    "n8n gmail automation",
+    "n8n gmail ai",
+    "n8n notion workflow",
+    "n8n webhook automation",
+    "n8n api integration",
+        
+        
+    ]
+
+    for q in queries:
+        ingest_youtube_workflows(query=q, country="US", max_results=10)
+        ingest_youtube_workflows(query=q, country="IN", max_results=10)
+
     print("YouTube workflows ingested successfully.")

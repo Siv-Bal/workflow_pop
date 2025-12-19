@@ -27,6 +27,9 @@ class Workflow(Base):
     engagement_score = Column(Integer)
     volume_score = Column(Integer)
     trend_score = Column(Integer)
+    trend_direction = Column(String, nullable=True)
+    trend_avg_interest = Column(Float, nullable=True)
+
 
     explanation = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)

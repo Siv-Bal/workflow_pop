@@ -31,4 +31,4 @@ def list_workflows(
     limit: int = 50,
     db: Session = Depends(get_db)
 ):
-    return get_workflows(db, platform, country, limit)
+    return get_workflows(db, platform=platform, country=country, limit=limit)

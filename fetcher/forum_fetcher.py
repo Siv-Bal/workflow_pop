@@ -1,3 +1,4 @@
+
 """
 Forum workflow ingestion
 Source: n8n Community (Discourse)
@@ -93,7 +94,8 @@ def ingest_forum_workflows(country: str = "US", limit: int = 50):
                 views=views,
                 likes=likes,
                 comments=replies,
-                trend_score=trend["trend_score"]
+                keyword=workflow_name,
+                country=country
             )
 
             explanation = generate_explanation(
@@ -121,6 +123,9 @@ def ingest_forum_workflows(country: str = "US", limit: int = 50):
                 "engagement_score": scores["engagement_score"],
                 "volume_score": scores["volume_score"],
                 "trend_score": scores["trend_score"],
+                "trend_direction": trend["trend_direction"],
+                "trend_avg_interest": trend["avg_interest"],
+                
 
                 "explanation": explanation,
             }
@@ -138,3 +143,4 @@ if __name__ == "__main__":
     ingest_forum_workflows(country="US", limit=50)
     ingest_forum_workflows(country="IN", limit=50)
     print("Forum workflows ingested successfully.")
+>>>>>>> 292aa42 (Update ingestion logic)
